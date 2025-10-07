@@ -1,0 +1,14 @@
+services:
+  iso-builder:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: arch-iso-builder
+    privileged: true
+    volumes:
+      # Mount per output della ISO
+      - ./output:/output
+      # Mount per script (se vuoi modificarli senza rebuild)
+      - ./scripts:/build/scripts:ro
+    environment:
+      - TZ=Europe/Rome

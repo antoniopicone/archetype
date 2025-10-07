@@ -1,0 +1,5 @@
+output/
+*.iso
+.git/
+README.md
+*.log
