@@ -1,14 +1,27 @@
 services:
-  iso-builder:
+  iso-builder-x86_64:
     build:
       context: .
-      dockerfile: Dockerfile
-    container_name: arch-iso-builder
+      dockerfile: x86_64/Dockerfile
+    container_name: archetype-iso-builder-x86_64
     privileged: true
     volumes:
-      # Mount per output della ISO
       - ./output:/output
-      # Mount per script (se vuoi modificarli senza rebuild)
       - ./scripts:/build/scripts:ro
     environment:
       - TZ=Europe/Rome
+      - ARCH=x86_64
+
+  iso-builder-arm64:
+    build:
+      context: .
+      dockerfile: arm64/Dockerfile
+    container_name: archetype-iso-builder-arm64
+    privileged: true
+    volumes:
+      - ./output:/output
+      - ./scripts:/build/scripts:ro
+    environment:
+      - TZ=Europe/Rome
+      - ARCH=aarch64
+    platform: linux/arm64
