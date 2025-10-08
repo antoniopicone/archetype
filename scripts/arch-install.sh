@@ -1,7 +1,24 @@
 #!/bin/bash
 
+# Detect architecture
+ARCH=$(uname -m)
+case "$ARCH" in
+    x86_64)
+        ARCH_NAME="x86_64"
+        ;;
+    aarch64|arm64)
+        ARCH_NAME="ARM64"
+        ARCH="aarch64"
+        ;;
+    *)
+        echo "ERROR: Unsupported architecture: $ARCH"
+        exit 1
+        ;;
+esac
+
+
 echo "======================================"
-echo "  Arch Linux Automated Installer    "
+echo "  Archetype Linux Installer ($ARCH_NAME)    "
 echo "======================================"
 echo
 
@@ -433,7 +450,7 @@ CRYPT_UUID="__CRYPT_UUID__"
 # ========================================
 # 1. TIMEZONE
 # ========================================
-echo "[1/11] Configuring timezone..."
+echo "[1/13] Configuring timezone..."
 ln -sf /usr/share/zoneinfo/$TIMEZONE /etc/localtime
 hwclock --systohc
 echo "✓ Timezone: $TIMEZONE"
@@ -441,7 +458,7 @@ echo "✓ Timezone: $TIMEZONE"
 # ========================================
 # 2. LOCALIZATION
 # ========================================
-echo "[2/11] Configuring locale..."
+echo "[2/13] Configuring locale..."
 sed -i "s/^#$LOCALE/$LOCALE/" /etc/locale.gen
 locale-gen
 echo "LANG=$LOCALE" > /etc/locale.conf
@@ -450,7 +467,7 @@ echo "✓ Locale: $LOCALE"
 # ========================================
 # 3. KEYBOARD
 # ========================================
-echo "[3/11] Configuring keyboard..."
+echo "[3/13] Configuring keyboard..."
 cat > /etc/vconsole.conf << EOF
 KEYMAP=$KEYBOARD
 FONT=ter-118n
@@ -461,7 +478,7 @@ echo "✓ Keyboard: $KEYBOARD"
 # ========================================
 # 4. HOSTNAME
 # ========================================
-echo "[4/11] Configuring hostname..."
+echo "[4/13] Configuring hostname..."
 read -p "Enter system hostname: " HOSTNAME
 echo "$HOSTNAME" > /etc/hostname
 
@@ -476,7 +493,7 @@ echo "✓ Hostname: $HOSTNAME"
 # ========================================
 # 5. MKINITCPIO (LUKS)
 # ========================================
-echo "[5/11] Configuring mkinitcpio for LUKS..."
+echo "[5/13] Configuring mkinitcpio for LUKS..."
 
 # Backup original
 cp /etc/mkinitcpio.conf /etc/mkinitcpio.conf.backup
@@ -492,14 +509,14 @@ mkinitcpio -P
 # ========================================
 # 6. ROOT PASSWORD
 # ========================================
-echo "[6/11] Setting root password..."
+echo "[6/13] Setting root password..."
 echo "Enter password for root user:"
 passwd
 
 # ========================================
 # 7. USER CREATION
 # ========================================
-echo "[7/11] Creating regular user..."
+echo "[7/13] Creating regular user..."
 read -p "Do you want to create a regular user? (yes/no) [yes]: " CREATE_USER
 CREATE_USER=${CREATE_USER:-yes}
 
@@ -518,7 +535,7 @@ fi
 # ========================================
 # 8. GRUB CONFIGURATION
 # ========================================
-echo "[8/11] Configuring GRUB..."
+echo "[8/13] Configuring GRUB..."
 
 # Modify /etc/default/grub
 sed -i "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=$CRYPT_UUID:cryptroot root=/dev/mapper/cryptroot\"|" /etc/default/grub
@@ -531,21 +548,130 @@ echo "✓ GRUB configured for LUKS"
 # ========================================
 # 9. GRUB INSTALLATION
 # ========================================
-echo "[9/11] Installing GRUB to EFI..."
+echo "[9/13] Installing GRUB to EFI..."
 grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB
 
-echo "[10/11] Generating GRUB configuration..."
+echo "[10/13] Generating GRUB configuration..."
 grub-mkconfig -o /boot/grub/grub.cfg
 
 echo "✓ GRUB installed and configured"
 
 # ========================================
-# 10. ENABLING SERVICES
+# 10. DESKTOP ENVIRONMENT INSTALLATION
 # ========================================
-echo "[11/11] Enabling network services..."
+echo "[11/13] Installing GNOME Desktop Environment..."
+echo "This will install GNOME, GDM, Chromium, and Betterbird..."
+echo "This may take several minutes..."
+
+pacman -S --noconfirm gnome gnome-extra gdm chromium
+
+if [ $? -ne 0 ]; then
+    echo "⚠️  WARNING: Desktop environment installation encountered issues"
+    echo "You can install manually later with: pacman -S gnome gnome-extra gdm chromium"
+else
+    echo "✓ GNOME Desktop Environment installed"
+fi
+
+# Install Betterbird (AUR package - we'll add instructions for manual installation)
+echo
+echo "NOTE: Betterbird is available in AUR and needs to be installed manually after first boot."
+echo "After first login, install it with:"
+echo "  git clone https://aur.archlinux.org/betterbird-bin.git"
+echo "  cd betterbird-bin && makepkg -si"
+echo
+
+# ========================================
+# 11. ENABLING SERVICES
+# ========================================
+echo "[12/13] Enabling system services..."
 systemctl enable NetworkManager
+systemctl enable gdm
 
 echo "✓ NetworkManager enabled"
+echo "✓ GDM (GNOME Display Manager) enabled"
+
+# ========================================
+# 12. POST-INSTALL NOTES
+# ========================================
+echo "[13/13] Creating post-install notes..."
+
+cat > /root/POST_INSTALL_NOTES.txt << 'NOTES_EOF'
+==========================================
+   POST-INSTALLATION NOTES
+==========================================
+
+=== Desktop Environment ===
+✓ GNOME Desktop installed
+✓ GDM Display Manager enabled (will auto-start on boot)
+✓ Chromium browser installed
+
+=== Applications to Install Manually ===
+
+1. Betterbird (Email Client):
+   Betterbird is available in the AUR (Arch User Repository).
+   To install:
+   
+   cd ~
+   git clone https://aur.archlinux.org/betterbird-bin.git
+   cd betterbird-bin
+   makepkg -si
+   
+   Or install using an AUR helper like yay or paru:
+   yay -S betterbird-bin
+
+=== Recommended Post-Installation Steps ===
+
+1. Update the system:
+   sudo pacman -Syu
+
+2. Install AUR helper (recommended):
+   git clone https://aur.archlinux.org/yay.git
+   cd yay
+   makepkg -si
+
+3. Install additional fonts:
+   sudo pacman -S ttf-dejavu ttf-liberation noto-fonts
+
+4. Configure firewall:
+   sudo pacman -S ufw
+   sudo systemctl enable --now ufw
+   sudo ufw enable
+
+5. Install video drivers (choose based on your GPU):
+   - Intel: sudo pacman -S mesa
+   - AMD: sudo pacman -S mesa xf86-video-amdgpu
+   - NVIDIA: sudo pacman -S nvidia nvidia-utils
+
+6. Configure btrfs snapshots:
+   sudo pacman -S snapper snap-pac
+   sudo snapper -c root create-config /
+   sudo snapper -c home create-config /home
+
+7. Enable TRIM for SSD (if applicable):
+   sudo systemctl enable fstrim.timer
+
+=== Useful GNOME Extensions ===
+Visit: https://extensions.gnome.org
+
+- Dash to Dock
+- AppIndicator Support
+- Clipboard Indicator
+- Vitals
+
+Install GNOME Extensions support:
+sudo pacman -S gnome-browser-connector
+
+=== System Information ===
+- Desktop: GNOME
+- Display Manager: GDM
+- Browser: Chromium
+- Terminal: GNOME Terminal (pre-installed)
+- File Manager: Nautilus (pre-installed)
+
+==========================================
+NOTES_EOF
+
+echo "✓ Post-install notes saved to /root/POST_INSTALL_NOTES.txt"
 
 # ========================================
 # FINAL SUMMARY
@@ -562,6 +688,8 @@ echo "  Keyboard: $KEYBOARD"
 echo "  Hostname: $(cat /etc/hostname)"
 echo "  Bootloader: GRUB (EFI)"
 echo "  Filesystem: Btrfs + LUKS"
+echo "  Desktop: GNOME + GDM"
+echo "  Browser: Chromium"
 echo
 echo "=== Next Steps ==="
 echo "1. Exit chroot: exit"
@@ -571,8 +699,10 @@ echo "4. Reboot: reboot"
 echo
 echo "After reboot:"
 echo "  - You will be prompted for LUKS password"
-echo "  - Login with root or created user"
-echo "  - Connect to network: nmtui or nmcli"
+echo "  - GDM will start automatically"
+echo "  - Login with your created user credentials"
+echo "  - GNOME Desktop will load automatically"
+echo "  - See /root/POST_INSTALL_NOTES.txt for Betterbird installation"
 echo
 
 CHROOT_EOF
@@ -599,7 +729,7 @@ arch-chroot /mnt /chroot-setup.sh
 
 if [ $? -ne 0 ]; then
     echo
-    echo "⚠ WARNING: An error occurred in chroot"
+    echo "⚠  WARNING: An error occurred in chroot"
     echo "The script is available at /mnt/chroot-setup.sh"
     echo "You can enter manually with: arch-chroot /mnt"
     exit 1
@@ -619,6 +749,12 @@ echo "======================================"
 echo "✓ INSTALLATION COMPLETED!"
 echo "======================================"
 echo
+echo "=== Desktop Environment ==="
+echo "✓ GNOME Desktop installed"
+echo "✓ GDM Display Manager enabled"
+echo "✓ Chromium browser installed"
+echo "⚠  Betterbird: Install manually after first boot (see instructions below)"
+echo
 echo "=== To Complete ==="
 echo "1. Unmount partitions:"
 echo "   umount -R /mnt"
@@ -630,14 +766,26 @@ echo "   reboot"
 echo
 echo "3. After reboot:"
 echo "   - Enter LUKS password"
-echo "   - Login with created credentials"
-echo "   - Connect to network: nmtui"
+echo "   - GDM login screen will appear"
+echo "   - Login with your user credentials"
+echo "   - GNOME Desktop will start automatically"
 echo
-echo "=== Recommended Post-Installation ==="
-echo "- Install desktop environment: pacman -S xorg gnome"
-echo "- Configure firewall: pacman -S ufw && ufw enable"
-echo "- Install appropriate video drivers"
-echo "- Configure btrfs snapshots: pacman -S snapper"
+echo "=== Install Betterbird (Email Client) ==="
+echo "After logging into GNOME:"
+echo "1. Open Terminal (GNOME Terminal)"
+echo "2. Install yay (AUR helper):"
+echo "   git clone https://aur.archlinux.org/yay.git"
+echo "   cd yay && makepkg -si"
+echo "3. Install Betterbird:"
+echo "   yay -S betterbird-bin"
+echo
+echo "Or see /root/POST_INSTALL_NOTES.txt for detailed instructions"
+echo
+echo "=== Recommended Next Steps ==="
+echo "- Update system: sudo pacman -Syu"
+echo "- Install video drivers for your GPU"
+echo "- Configure firewall: sudo pacman -S ufw && sudo ufw enable"
+echo "- Configure btrfs snapshots with snapper"
 echo
 
 read -p "Do you want to unmount partitions now? (yes/no) [no]: " UNMOUNT_NOW
