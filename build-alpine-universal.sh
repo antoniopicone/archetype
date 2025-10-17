@@ -18,10 +18,15 @@ error() { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
 # Configuration
 ALPINE_VERSION="3.20"
 ALPINE_ARCH="aarch64"
-ALPINE_ISO="alpine-virt-${ALPINE_VERSION}.0-${ALPINE_ARCH}.iso"
-ALPINE_URL="https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION}/releases/${ALPINE_ARCH}/${ALPINE_ISO}"
-WORK_DIR="alpine-custom-build"
-OUTPUT_ISO="alpine-archetype-autoinstall-${ALPINE_ARCH}.iso"
+
+# Usa percorso assoluto per ISOs
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ISOS_DIR="$SCRIPT_DIR/ISOs"
+mkdir -p "$ISOS_DIR"
+ALPINE_ISO="$ISOS_DIR/alpine-virt-${ALPINE_VERSION}.0-${ALPINE_ARCH}.iso"
+ALPINE_URL="https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION}/releases/${ALPINE_ARCH}/alpine-virt-${ALPINE_VERSION}.0-${ALPINE_ARCH}.iso"
+WORK_DIR="$SCRIPT_DIR/alpine-custom-build"
+OUTPUT_ISO="$ISOS_DIR/alpine-archetype-autoinstall-${ALPINE_ARCH}.iso"
 
 # Check dependencies
 info "Checking dependencies..."
@@ -43,9 +48,9 @@ mkdir -p "$WORK_DIR"
 cd "$WORK_DIR"
 
 # Download Alpine ISO
-if [ ! -f "../$ALPINE_ISO" ]; then
+if [ ! -f "$ALPINE_ISO" ]; then
     info "Downloading Alpine Linux ISO..."
-    wget -q --show-progress "$ALPINE_URL" -O "../$ALPINE_ISO"
+    wget -q --show-progress "$ALPINE_URL" -O "$ALPINE_ISO"
 else
     info "Using existing Alpine ISO: $ALPINE_ISO"
 fi
@@ -53,7 +58,7 @@ fi
 # Extract ISO
 info "Extracting Alpine ISO..."
 mkdir -p iso_content
-xorriso -osirrox on -indev "../$ALPINE_ISO" -extract / iso_content/ 2>&1 | grep -v "^xorriso : UPDATE" || true
+xorriso -osirrox on -indev "$ALPINE_ISO" -extract / iso_content/ 2>&1 | grep -v "^xorriso : UPDATE" || true
 
 # Make extracted files writable
 chmod -R u+w iso_content/
@@ -245,11 +250,11 @@ info "Building custom ISO..."
 VOLID=$(xorriso -indev "../$ALPINE_ISO" -report_el_torito as_mkisofs 2>&1 | grep "^-V" | cut -d"'" -f2 || echo "ALPINE")
 
 # Extract MBR for ARM64 boot
-dd if="../$ALPINE_ISO" of=mbr_area.img bs=512 count=16 2>/dev/null
+dd if="$ALPINE_ISO" of=mbr_area.img bs=512 count=16 2>/dev/null
 
 # Create new ISO
 xorriso -as mkisofs \
-    -o "../$OUTPUT_ISO" \
+    -o "$OUTPUT_ISO" \
     -V "$VOLID" \
     -J -joliet-long \
     -R \

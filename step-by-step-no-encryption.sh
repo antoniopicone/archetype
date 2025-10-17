@@ -5,13 +5,37 @@
 # Hardware: UTM, Raspberry Pi 4/5, ARM64 UEFI systems
 # Layout: EFI boot (FAT32) + Btrfs root with subvolumes
 
+# Verbosity control
+DEBUG=0
+for arg in "$@"; do
+    [ "$arg" = "--debug" ] && DEBUG=1
+done
+
+log() {
+    if [ "$DEBUG" -eq 1 ]; then
+        echo "$@"
+    fi
+}
+
+banner() {
+    clear
+    cat <<'BANNER'
+╔══════════════════════════════════════════════════════════════╗
+║                                                              ║
+║              ARCHETYPE AUTO-INSTALLER                        ║
+║         Arch Linux ARM64 Installation System                ║
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝
+BANNER
+}
+
 # ==============================================================================
 # PART 1: ALPINE LINUX SETUP (Live Environment)
 # ==============================================================================
 
-echo "=========================================="
-echo "Part 1: Setting up Alpine Linux"
-echo "=========================================="
+banner
+echo "\n[Auto-install] Setting up Alpine Linux..."
+log "== Verbose output enabled =="
 
 # Configure keyboard and timezone
 setup-keymap it it
@@ -51,6 +75,10 @@ apk add --no-cache \
     tar \
     gzip \
     lsblk
+    terminus-font
+
+# Set console font (Terminus)
+setfont ter-118n || true
 
 # Enable and configure SSH
 rc-update add sshd
@@ -83,9 +111,8 @@ read
 # PART 2: DISK PREPARATION
 # ==============================================================================
 
-echo "=========================================="
-echo "Part 2: Disk Preparation"
-echo "=========================================="
+echo "\n[Auto-install] Preparing disk..."
+log "== Disk setup details =="
 
 # Load Btrfs kernel module
 modprobe btrfs
@@ -180,7 +207,7 @@ btrfs subvolume create /mnt/@swap
 umount /mnt
 
 # Mount subvolumes with optimal options
-echo "Mounting Btrfs subvolumes..."
+echo "[Auto-install] Mounting Btrfs subvolumes..."
 mount -o defaults,noatime,compress=zstd:1,space_cache=v2,subvol=@ "$ROOT" /mnt
 
 mkdir -p /mnt/home
@@ -198,6 +225,109 @@ mount -o defaults,noatime,subvol=@swap "$ROOT" /mnt/swap
 # Mount EFI boot partition
 mkdir -p /mnt/boot
 mount "$BOOT" /mnt/boot
+
+#FIXME: durante il setup, non viene eseguito
+
+# Install additional fonts in Arch chroot
+cat > /mnt/root/install-fonts.sh << 'EOFFONT'
+#!/bin/bash
+set -e
+pacman -S --noconfirm terminus-font ttf-dejavu ttf-liberation noto-fonts
+echo "FONT=ter-118n" > /etc/vconsole.conf
+echo "FONT_MAP=8859-1_to_uni" >> /etc/vconsole.conf
+# Enable color support in terminal
+echo "export TERM=xterm-256color" >> /etc/profile
+echo 'export PS1="\[\e[32m\]\u@\h:\w\$\[\e[0m\] "' >> /etc/profile
+# Also set for new users
+echo "export TERM=xterm-256color" >> /etc/skel/.bashrc
+echo 'export PS1="\[\e[32m\]\u@\h:\w\$\[\e[0m\] "' >> /etc/skel/.bashrc
+
+# Video drivers detection and installation
+echo "[Auto-install] Detecting and installing video drivers..."
+GPU_INTEL=$(lspci | grep -i "vga\|3d" | grep -i intel)
+GPU_AMD=$(lspci | grep -i "vga\|3d" | grep -i "amd\|ati")
+GPU_NVIDIA=$(lspci | grep -i "vga\|3d" | grep -i nvidia)
+
+if [ -n "$GPU_INTEL" ]; then
+    echo "Intel GPU detected: $GPU_INTEL"
+    echo "Installing Intel drivers..."
+    pacman -S --noconfirm mesa
+    echo "✓ Intel video drivers installed"
+fi
+
+if [ -n "$GPU_AMD" ]; then
+    echo "AMD GPU detected: $GPU_AMD"
+    echo "Installing AMD drivers..."
+    pacman -S --noconfirm mesa xf86-video-amdgpu
+    echo "✓ AMD video drivers installed"
+fi
+
+if [ -n "$GPU_NVIDIA" ]; then
+    echo "NVIDIA GPU detected: $GPU_NVIDIA"
+    echo "Installing NVIDIA drivers..."
+    pacman -S --noconfirm nvidia nvidia-utils
+    echo "✓ NVIDIA video drivers installed"
+fi
+
+if [ -z "$GPU_INTEL" ] && [ -z "$GPU_AMD" ] && [ -z "$GPU_NVIDIA" ]; then
+    echo "⚠️  No recognized GPU detected. Installing generic mesa drivers..."
+    pacman -S --noconfirm mesa
+fi
+
+# Firewall configuration
+echo "[Auto-install] Installing and configuring firewall..."
+pacman -S --noconfirm ufw
+if [ $? -eq 0 ]; then
+    systemctl enable ufw
+    echo "✓ UFW firewall installed and enabled"
+    echo "Note: UFW will be activated after first boot"
+else
+    echo "⚠️  Warning: UFW installation failed"
+fi
+
+# Btrfs Snapshots configuration
+echo "[Auto-install] Installing and configuring Btrfs snapshots..."
+pacman -S --noconfirm snapper snap-pac
+if [ $? -eq 0 ]; then
+    if btrfs subvolume list / | grep -q "@"; then
+        snapper -c root create-config /
+        mkdir -p /.snapshots
+        chmod 750 /.snapshots
+        sed -i 's/^TIMELINE_CREATE=.*/TIMELINE_CREATE="yes"/' /etc/snapper/configs/root
+        sed -i 's/^TIMELINE_LIMIT_HOURLY=.*/TIMELINE_LIMIT_HOURLY="5"/' /etc/snapper/configs/root
+        sed -i 's/^TIMELINE_LIMIT_DAILY=.*/TIMELINE_LIMIT_DAILY="7"/' /etc/snapper/configs/root
+        sed -i 's/^TIMELINE_LIMIT_WEEKLY=.*/TIMELINE_LIMIT_WEEKLY="0"/' /etc/snapper/configs/root
+        sed -i 's/^TIMELINE_LIMIT_MONTHLY=.*/TIMELINE_LIMIT_MONTHLY="0"/' /etc/snapper/configs/root
+        sed -i 's/^TIMELINE_LIMIT_YEARLY=.*/TIMELINE_LIMIT_YEARLY="0"/' /etc/snapper/configs/root
+        systemctl enable snapper-timeline.timer
+        systemctl enable snapper-cleanup.timer
+        echo "✓ Automatic snapshots configured (hourly: 5, daily: 7)"
+    else
+        echo "⚠️  Btrfs subvolumes not detected. Snapper installed but not configured."
+        echo "You can configure it manually after boot."
+    fi
+else
+    echo "⚠️  Warning: Snapper installation failed"
+fi
+
+# SSD TRIM configuration
+echo "[Auto-install] Configuring SSD TRIM..."
+DISK_ROTATIONAL=$(cat /sys/block/$(lsblk -no PKNAME $ROOT | head -1)/queue/rotational 2>/dev/null)
+if [ "$DISK_ROTATIONAL" = "0" ]; then
+    echo "SSD detected. Enabling periodic TRIM..."
+    systemctl enable fstrim.timer
+    echo "✓ TRIM timer enabled for SSD optimization"
+else
+    echo "HDD detected or unable to detect disk type. Skipping TRIM configuration."
+fi
+
+# Enable essential services
+echo "[Auto-install] Enabling system services..."
+systemctl enable NetworkManager
+systemctl enable sshd
+systemctl enable avahi-daemon
+EOFFONT
+chmod +x /mnt/root/install-fonts.sh
 
 echo "✓ Filesystems mounted"
 
@@ -403,6 +533,10 @@ chmod +x /mnt/root/configure.sh
 echo "Running system configuration..."
 chroot /mnt /bin/bash /root/configure.sh
 
+# Install fonts in chroot
+chroot /mnt /bin/bash /root/install-fonts.sh
+rm /mnt/root/install-fonts.sh
+
 # Cleanup
 rm /mnt/root/configure.sh
 
@@ -411,9 +545,8 @@ rm /mnt/root/configure.sh
 # ==============================================================================
 
 echo ""
-echo "=========================================="
-echo "Installation Complete!"
-echo "=========================================="
+echo "\n[Auto-install] Installation Complete!"
+banner
 echo ""
 echo "Disk layout:"
 echo "  $BOOT -> /boot (FAT32, 512MB)"
