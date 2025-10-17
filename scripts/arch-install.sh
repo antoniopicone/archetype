@@ -69,7 +69,6 @@ LOCALE=${LOCALE:-en_US.UTF-8}
 
 echo "Setting locale: $LOCALE"
 export LANG="$LOCALE"
-# export LC_ALL="$LOCALE" ## Commented to avoid LC_ALL error
 echo "✓ Locale set: $LOCALE"
 echo
 
@@ -399,7 +398,8 @@ pacstrap /mnt base linux linux-firmware \
     git vim \
     sudo \
     man-db man-pages texinfo \
-    terminus-font
+    terminus-font \
+    base-devel
 
 if [ $? -ne 0 ]; then
     echo "ERROR: pacstrap installation failed!"
@@ -425,7 +425,7 @@ echo
 # ========================================
 echo "[3/5] Preparing chroot configuration..."
 
-# Find UUID of encrypted partition (FIXED)
+# Find UUID of encrypted partition
 CRYPT_DEVICE=$(cryptsetup status cryptroot | grep device | awk '{print $2}')
 CRYPT_UUID=$(blkid -s UUID -o value $CRYPT_DEVICE)
 
@@ -450,7 +450,7 @@ CRYPT_UUID="__CRYPT_UUID__"
 # ========================================
 # 1. TIMEZONE
 # ========================================
-echo "[1/13] Configuring timezone..."
+echo "[1/16] Configuring timezone..."
 ln -sf /usr/share/zoneinfo/$TIMEZONE /etc/localtime
 hwclock --systohc
 echo "✓ Timezone: $TIMEZONE"
@@ -458,7 +458,7 @@ echo "✓ Timezone: $TIMEZONE"
 # ========================================
 # 2. LOCALIZATION
 # ========================================
-echo "[2/13] Configuring locale..."
+echo "[2/16] Configuring locale..."
 sed -i "s/^#$LOCALE/$LOCALE/" /etc/locale.gen
 locale-gen
 echo "LANG=$LOCALE" > /etc/locale.conf
@@ -467,7 +467,7 @@ echo "✓ Locale: $LOCALE"
 # ========================================
 # 3. KEYBOARD
 # ========================================
-echo "[3/13] Configuring keyboard..."
+echo "[3/16] Configuring keyboard..."
 cat > /etc/vconsole.conf << EOF
 KEYMAP=$KEYBOARD
 FONT=ter-118n
@@ -478,7 +478,7 @@ echo "✓ Keyboard: $KEYBOARD"
 # ========================================
 # 4. HOSTNAME
 # ========================================
-echo "[4/13] Configuring hostname..."
+echo "[4/16] Configuring hostname..."
 read -p "Enter system hostname: " HOSTNAME
 echo "$HOSTNAME" > /etc/hostname
 
@@ -493,7 +493,7 @@ echo "✓ Hostname: $HOSTNAME"
 # ========================================
 # 5. MKINITCPIO (LUKS)
 # ========================================
-echo "[5/13] Configuring mkinitcpio for LUKS..."
+echo "[5/16] Configuring mkinitcpio for LUKS..."
 
 # Backup original
 cp /etc/mkinitcpio.conf /etc/mkinitcpio.conf.backup
@@ -505,18 +505,17 @@ echo "✓ HOOKS configured for LUKS"
 echo "Regenerating initramfs..."
 mkinitcpio -P
 
-
 # ========================================
 # 6. ROOT PASSWORD
 # ========================================
-echo "[6/13] Setting root password..."
+echo "[6/16] Setting root password..."
 echo "Enter password for root user:"
 passwd
 
 # ========================================
 # 7. USER CREATION
 # ========================================
-echo "[7/13] Creating regular user..."
+echo "[7/16] Creating regular user..."
 read -p "Do you want to create a regular user? (yes/no) [yes]: " CREATE_USER
 CREATE_USER=${CREATE_USER:-yes}
 
@@ -535,7 +534,7 @@ fi
 # ========================================
 # 8. GRUB CONFIGURATION
 # ========================================
-echo "[8/13] Configuring GRUB..."
+echo "[8/16] Configuring GRUB..."
 
 # Modify /etc/default/grub
 sed -i "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=$CRYPT_UUID:cryptroot root=/dev/mapper/cryptroot\"|" /etc/default/grub
@@ -548,10 +547,10 @@ echo "✓ GRUB configured for LUKS"
 # ========================================
 # 9. GRUB INSTALLATION
 # ========================================
-echo "[9/13] Installing GRUB to EFI..."
+echo "[9/16] Installing GRUB to EFI..."
 grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB
 
-echo "[10/13] Generating GRUB configuration..."
+echo "Generating GRUB configuration..."
 grub-mkconfig -o /boot/grub/grub.cfg
 
 echo "✓ GRUB installed and configured"
@@ -559,8 +558,8 @@ echo "✓ GRUB installed and configured"
 # ========================================
 # 10. DESKTOP ENVIRONMENT INSTALLATION
 # ========================================
-echo "[11/13] Installing GNOME Desktop Environment..."
-echo "This will install GNOME, GDM, Chromium, and Betterbird..."
+echo "[10/16] Installing GNOME Desktop Environment..."
+echo "This will install GNOME, GDM, and Chromium..."
 echo "This may take several minutes..."
 
 pacman -S --noconfirm gnome gnome-extra gdm chromium
@@ -572,18 +571,145 @@ else
     echo "✓ GNOME Desktop Environment installed"
 fi
 
-# Install Betterbird (AUR package - we'll add instructions for manual installation)
-echo
-echo "NOTE: Betterbird is available in AUR and needs to be installed manually after first boot."
-echo "After first login, install it with:"
-echo "  git clone https://aur.archlinux.org/betterbird-bin.git"
-echo "  cd betterbird-bin && makepkg -si"
-echo
+# ========================================
+# 11. ADDITIONAL FONTS
+# ========================================
+echo "[11/16] Installing additional fonts..."
+pacman -S --noconfirm ttf-dejavu ttf-liberation noto-fonts
+
+if [ $? -eq 0 ]; then
+    echo "✓ Additional fonts installed"
+else
+    echo "⚠️  Warning: Font installation had issues"
+fi
 
 # ========================================
-# 11. ENABLING SERVICES
+# 12. VIDEO DRIVERS DETECTION AND INSTALLATION
 # ========================================
-echo "[12/13] Enabling system services..."
+echo "[12/16] Detecting and installing video drivers..."
+
+# Detect GPU
+GPU_INTEL=$(lspci | grep -i "vga\|3d" | grep -i intel)
+GPU_AMD=$(lspci | grep -i "vga\|3d" | grep -i "amd\|ati")
+GPU_NVIDIA=$(lspci | grep -i "vga\|3d" | grep -i nvidia)
+
+if [ -n "$GPU_INTEL" ]; then
+    echo "Intel GPU detected: $GPU_INTEL"
+    echo "Installing Intel drivers..."
+    pacman -S --noconfirm mesa
+    echo "✓ Intel video drivers installed"
+fi
+
+if [ -n "$GPU_AMD" ]; then
+    echo "AMD GPU detected: $GPU_AMD"
+    echo "Installing AMD drivers..."
+    pacman -S --noconfirm mesa xf86-video-amdgpu
+    echo "✓ AMD video drivers installed"
+fi
+
+if [ -n "$GPU_NVIDIA" ]; then
+    echo "NVIDIA GPU detected: $GPU_NVIDIA"
+    echo "Installing NVIDIA drivers..."
+    pacman -S --noconfirm nvidia nvidia-utils
+    echo "✓ NVIDIA video drivers installed"
+fi
+
+if [ -z "$GPU_INTEL" ] && [ -z "$GPU_AMD" ] && [ -z "$GPU_NVIDIA" ]; then
+    echo "⚠️  No recognized GPU detected. Installing generic mesa drivers..."
+    pacman -S --noconfirm mesa
+fi
+
+# ========================================
+# 13. FIREWALL CONFIGURATION
+# ========================================
+echo "[13/16] Installing and configuring firewall..."
+pacman -S --noconfirm ufw
+
+if [ $? -eq 0 ]; then
+    systemctl enable ufw
+    # UFW will be enabled after first boot to avoid network issues during installation
+    echo "✓ UFW firewall installed and enabled"
+    echo "Note: UFW will be activated after first boot"
+else
+    echo "⚠️  Warning: UFW installation failed"
+fi
+
+# ========================================
+# 14. BTRFS SNAPSHOTS CONFIGURATION
+# ========================================
+echo "[14/16] Installing and configuring Btrfs snapshots..."
+pacman -S --noconfirm snapper snap-pac
+
+if [ $? -eq 0 ]; then
+    # Check if btrfs subvolumes were created
+    if btrfs subvolume list / | grep -q "@"; then
+        # Delete default .snapshots subvolume if it exists to avoid conflicts
+        if [ -d "/.snapshots" ]; then
+            umount /.snapshots 2>/dev/null
+            rmdir /.snapshots 2>/dev/null
+        fi
+        
+        # Create snapper config for root
+        snapper -c root create-config /
+        
+        # Remove snapper's auto-created subvolume and use our existing one
+        btrfs subvolume delete /.snapshots 2>/dev/null
+        mkdir -p /.snapshots
+        
+        # The @snapshots subvolume should already be mounted from the main script
+        
+        # Configure snapper for home if @home subvolume exists
+        if btrfs subvolume list /home | grep -q "@home" || btrfs subvolume list / | grep -q "@home"; then
+            snapper -c home create-config /home
+            echo "✓ Snapper configured for root and home"
+        else
+            echo "✓ Snapper configured for root"
+        fi
+        
+        # Set permissions
+        chmod 750 /.snapshots
+        
+        # Configure automatic snapshots
+        sed -i 's/^TIMELINE_CREATE=.*/TIMELINE_CREATE="yes"/' /etc/snapper/configs/root
+        sed -i 's/^TIMELINE_LIMIT_HOURLY=.*/TIMELINE_LIMIT_HOURLY="5"/' /etc/snapper/configs/root
+        sed -i 's/^TIMELINE_LIMIT_DAILY=.*/TIMELINE_LIMIT_DAILY="7"/' /etc/snapper/configs/root
+        sed -i 's/^TIMELINE_LIMIT_WEEKLY=.*/TIMELINE_LIMIT_WEEKLY="0"/' /etc/snapper/configs/root
+        sed -i 's/^TIMELINE_LIMIT_MONTHLY=.*/TIMELINE_LIMIT_MONTHLY="0"/' /etc/snapper/configs/root
+        sed -i 's/^TIMELINE_LIMIT_YEARLY=.*/TIMELINE_LIMIT_YEARLY="0"/' /etc/snapper/configs/root
+        
+        # Enable snapper timers
+        systemctl enable snapper-timeline.timer
+        systemctl enable snapper-cleanup.timer
+        
+        echo "✓ Automatic snapshots configured (hourly: 5, daily: 7)"
+    else
+        echo "⚠️  Btrfs subvolumes not detected. Snapper installed but not configured."
+        echo "You can configure it manually after boot."
+    fi
+else
+    echo "⚠️  Warning: Snapper installation failed"
+fi
+
+# ========================================
+# 15. SSD TRIM CONFIGURATION
+# ========================================
+echo "[15/16] Configuring SSD TRIM..."
+
+# Check if disk is SSD
+DISK_ROTATIONAL=$(cat /sys/block/$(basename $(readlink -f /dev/mapper/cryptroot) | sed 's/[0-9]*$//p' | sed 's/p$//' | tail -1)/queue/rotational 2>/dev/null)
+
+if [ "$DISK_ROTATIONAL" = "0" ]; then
+    echo "SSD detected. Enabling periodic TRIM..."
+    systemctl enable fstrim.timer
+    echo "✓ TRIM timer enabled for SSD optimization"
+else
+    echo "HDD detected or unable to detect disk type. Skipping TRIM configuration."
+fi
+
+# ========================================
+# 16. ENABLING SERVICES
+# ========================================
+echo "[16/16] Enabling system services..."
 systemctl enable NetworkManager
 systemctl enable gdm
 
@@ -591,87 +717,316 @@ echo "✓ NetworkManager enabled"
 echo "✓ GDM (GNOME Display Manager) enabled"
 
 # ========================================
-# 12. POST-INSTALL NOTES
+# POST-INSTALL SCRIPT FOR USER (AUTO-RUN AT BOOT)
 # ========================================
-echo "[13/13] Creating post-install notes..."
+echo
+echo "Creating automatic post-install setup (pre-login)..."
+
+# Create the main post-install script
+cat > /home/$USERNAME/post-install-user.sh << 'USER_SCRIPT_EOF'
+#!/bin/bash
+
+# Log file for debugging
+LOGFILE="/home/__USERNAME__/post-install.log"
+exec > >(tee -a "$LOGFILE") 2>&1
+
+echo "======================================"
+echo "  Post-Installation User Setup       "
+echo "======================================"
+echo "Starting at: $(date)"
+echo
+
+# Wait for network to be ready
+echo "Waiting for network connection..."
+for i in {1..60}; do
+    if ping -c 1 8.8.8.8 &> /dev/null; then
+        echo "✓ Network is ready"
+        break
+    fi
+    if [ $i -eq 60 ]; then
+        echo "⚠️  Network timeout - installation may fail"
+        echo "NETWORK_FAILED" > /tmp/post-install-status
+        exit 1
+    fi
+    sleep 2
+done
+
+# ========================================
+# 1. INSTALL YAY (AUR HELPER)
+# ========================================
+echo "[1/3] Installing yay (AUR helper)..."
+cd /home/__USERNAME__
+sudo -u __USERNAME__ git clone https://aur.archlinux.org/yay.git
+cd yay
+sudo -u __USERNAME__ makepkg -si --noconfirm
+cd ..
+rm -rf yay
+
+if command -v yay &> /dev/null; then
+    echo "✓ yay installed successfully"
+else
+    echo "⚠️  yay installation failed"
+    echo "YAY_FAILED" > /tmp/post-install-status
+    exit 1
+fi
+
+# ========================================
+# 2. INSTALL BETTERBIRD
+# ========================================
+echo "[2/3] Installing Betterbird..."
+sudo -u __USERNAME__ yay -S --noconfirm betterbird-bin
+
+if [ $? -eq 0 ]; then
+    echo "✓ Betterbird installed successfully"
+else
+    echo "⚠️  Betterbird installation failed (continuing anyway)"
+fi
+
+# ========================================
+# 3. ENABLE UFW FIREWALL
+# ========================================
+echo "[3/3] Enabling UFW firewall..."
+ufw --force enable
+
+if [ $? -eq 0 ]; then
+    echo "✓ UFW firewall enabled"
+else
+    echo "⚠️  UFW enable failed"
+fi
+
+# ========================================
+# COMPLETION
+# ========================================
+echo
+echo "======================================"
+echo "✓ Post-installation completed!"
+echo "======================================"
+echo "Completed at: $(date)"
+echo
+echo "Installed applications:"
+echo "  ✓ yay (AUR helper)"
+echo "  ✓ Betterbird (email client)"
+echo "  ✓ UFW firewall (enabled)"
+echo
+echo "Log saved to: $LOGFILE"
+echo
+
+# Create success flag file
+cat > /tmp/post-install-status << EOF
+SUCCESS
+Installed at: $(date)
+
+✓ yay (AUR helper)
+✓ Betterbird (email client)  
+✓ UFW firewall
+EOF
+
+# Make the flag readable by the user
+chown __USERNAME__:__USERNAME__ /tmp/post-install-status
+
+# Disable the systemd service so it doesn't run again
+systemctl disable arch-post-install.service
+
+# Remove the service file
+rm -f /etc/systemd/system/arch-post-install.service
+
+# Remove this script
+rm -- "$0"
+
+USER_SCRIPT_EOF
+
+# Replace username placeholder in script
+sed -i "s|__USERNAME__|$USERNAME|g" /home/$USERNAME/post-install-user.sh
+
+# Make the script executable
+chmod +x /home/$USERNAME/post-install-user.sh
+chown root:root /home/$USERNAME/post-install-user.sh
+
+# Create systemd SYSTEM service that runs at boot (before GDM)
+cat > /mnt/etc/systemd/system/arch-post-install.service << 'SERVICE_EOF'
+[Unit]
+Description=Arch Linux Post-Installation Setup (Pre-Login)
+After=network-online.target
+Wants=network-online.target
+Before=gdm.service
+
+[Service]
+Type=oneshot
+ExecStart=/home/__USERNAME__/post-install-user.sh
+StandardOutput=journal
+StandardError=journal
+RemainAfterExit=yes
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target
+SERVICE_EOF
+
+# Replace username placeholder
+sed -i "s|__USERNAME__|$USERNAME|g" /mnt/etc/systemd/system/arch-post-install.service
+
+# Enable the service (will run at first boot)
+arch-chroot /mnt systemctl enable arch-post-install.service
+
+echo "✓ Automatic post-install service created and enabled"
+echo "✓ Service will run automatically at first boot (before login)"
+
+# Create a user service to show notification after first login
+mkdir -p /home/$USERNAME/.config/systemd/user
+
+cat > /home/$USERNAME/.config/systemd/user/post-install-notify.service << 'NOTIFY_SERVICE_EOF'
+[Unit]
+Description=Show post-installation notification
+After=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/__USERNAME__/show-post-install-notification.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=default.target
+NOTIFY_SERVICE_EOF
+
+# Create notification script
+cat > /home/$USERNAME/show-post-install-notification.sh << 'NOTIFY_SCRIPT_EOF'
+#!/bin/bash
+
+# Check if post-install was successful
+if [ -f /tmp/post-install-status ]; then
+    STATUS=$(cat /tmp/post-install-status)
+    
+    if echo "$STATUS" | grep -q "SUCCESS"; then
+        notify-send "Welcome to Arch Linux!" "✓ System setup completed successfully\n\n$(tail -n +3 /tmp/post-install-status)\n\nYour system is ready to use!" -u normal -t 15000 -i dialog-information
+    else
+        notify-send "Post-Installation" "⚠️  Some components failed to install\n\nCheck ~/post-install.log for details" -u critical -t 10000 -i dialog-warning
+    fi
+    
+    # Clean up
+    rm -f /tmp/post-install-status
+fi
+
+# Disable this service after first run
+systemctl --user disable post-install-notify.service
+rm -f ~/.config/systemd/user/post-install-notify.service
+rm -f "$0"
+NOTIFY_SCRIPT_EOF
+
+# Replace username placeholder
+sed -i "s|__USERNAME__|$USERNAME|g" /home/$USERNAME/.config/systemd/user/post-install-notify.service
+sed -i "s|__USERNAME__|$USERNAME|g" /home/$USERNAME/show-post-install-notification.sh
+
+# Set permissions
+chmod +x /home/$USERNAME/show-post-install-notification.sh
+chown -R $USERNAME:$USERNAME /home/$USERNAME/.config
+chown $USERNAME:$USERNAME /home/$USERNAME/show-post-install-notification.sh
+
+# Enable notification service
+arch-chroot /mnt sudo -u $USERNAME systemctl --user enable post-install-notify.service
+
+echo "✓ Post-login notification service created"
+
+# ========================================
+# POST-INSTALL NOTES
+# ========================================
+echo
+echo "Creating comprehensive post-install notes..."
 
 cat > /root/POST_INSTALL_NOTES.txt << 'NOTES_EOF'
 ==========================================
    POST-INSTALLATION NOTES
 ==========================================
 
-=== Desktop Environment ===
-✓ GNOME Desktop installed
-✓ GDM Display Manager enabled (will auto-start on boot)
-✓ Chromium browser installed
+=== ✓ COMPLETED DURING INSTALLATION ===
 
-=== Applications to Install Manually ===
+System Configuration:
+  ✓ GNOME Desktop Environment
+  ✓ GDM Display Manager (auto-start on boot)
+  ✓ Chromium browser
+  ✓ NetworkManager
+  ✓ Additional fonts (DejaVu, Liberation, Noto)
+  
+Video Drivers:
+  ✓ GPU drivers detected and installed automatically
+  
+Filesystem:
+  ✓ Btrfs with subvolumes (@, @home, @snapshots, @log)
+  ✓ Snapper configured for automatic snapshots
+    - Hourly: 5 snapshots retained
+    - Daily: 7 snapshots retained
+  ✓ SSD TRIM enabled (if SSD detected)
+  
+Security:
+  ✓ UFW firewall installed (to be enabled after first login)
+  ✓ LUKS2 full disk encryption
 
-1. Betterbird (Email Client):
-   Betterbird is available in the AUR (Arch User Repository).
-   To install:
-   
-   cd ~
-   git clone https://aur.archlinux.org/betterbird-bin.git
-   cd betterbird-bin
-   makepkg -si
-   
-   Or install using an AUR helper like yay or paru:
-   yay -S betterbird-bin
+=== ⚠️  AUTOMATIC POST-INSTALLATION ===
 
-=== Recommended Post-Installation Steps ===
+IMPORTANT: At FIRST BOOT (before login screen):
 
-1. Update the system:
-   sudo pacman -Syu
+The system will automatically install additional components:
+  ✓ yay (AUR helper)
+  ✓ Betterbird (email client)
+  ✓ UFW firewall
 
-2. Install AUR helper (recommended):
-   git clone https://aur.archlinux.org/yay.git
-   cd yay
-   makepkg -si
+This happens BEFORE the login screen appears.
+The first boot may take 5-10 minutes longer than usual.
 
-3. Install additional fonts:
-   sudo pacman -S ttf-dejavu ttf-liberation noto-fonts
+When you see the GDM login screen, everything is ready!
+After login, you'll see a notification confirming the setup.
 
-4. Configure firewall:
-   sudo pacman -S ufw
-   sudo systemctl enable --now ufw
-   sudo ufw enable
+The installation process is logged to: ~/post-install.log
 
-5. Install video drivers (choose based on your GPU):
-   - Intel: sudo pacman -S mesa
-   - AMD: sudo pacman -S mesa xf86-video-amdgpu
-   - NVIDIA: sudo pacman -S nvidia nvidia-utils
+=== MANUAL POST-INSTALLATION STEPS ===
 
-6. Configure btrfs snapshots:
-   sudo pacman -S snapper snap-pac
-   sudo snapper -c root create-config /
-   sudo snapper -c home create-config /home
+System Updates:
+  sudo pacman -Syu
 
-7. Enable TRIM for SSD (if applicable):
-   sudo systemctl enable fstrim.timer
+GNOME Extensions (optional):
+  sudo pacman -S gnome-browser-connector
+  Visit: https://extensions.gnome.org
+  Recommended:
+    - Dash to Dock
+    - AppIndicator Support
+    - Clipboard Indicator
 
-=== Useful GNOME Extensions ===
-Visit: https://extensions.gnome.org
+Additional Software (examples):
+  yay -S visual-studio-code-bin     # VS Code
+  yay -S spotify                     # Spotify
+  yay -S discord                     # Discord
+  sudo pacman -S libreoffice-fresh   # LibreOffice
+  sudo pacman -S gimp                # GIMP
+  sudo pacman -S vlc                 # VLC media player
 
-- Dash to Dock
-- AppIndicator Support
-- Clipboard Indicator
-- Vitals
+Firewall Management:
+  sudo ufw status                    # Check status
+  sudo ufw allow 22/tcp              # Allow SSH (example)
+  sudo ufw deny 80/tcp               # Deny HTTP (example)
 
-Install GNOME Extensions support:
-sudo pacman -S gnome-browser-connector
+Snapshot Management:
+  sudo snapper list                  # List snapshots
+  sudo snapper create -d "Description"  # Manual snapshot
+  sudo snapper delete SNAPSHOT_NUM   # Delete snapshot
 
-=== System Information ===
-- Desktop: GNOME
-- Display Manager: GDM
-- Browser: Chromium
-- Terminal: GNOME Terminal (pre-installed)
-- File Manager: Nautilus (pre-installed)
+=== SYSTEM INFORMATION ===
+Desktop: GNOME
+Display Manager: GDM
+Browser: Chromium
+Email: Betterbird (install via post-install script)
+Terminal: GNOME Terminal
+File Manager: Nautilus
+Firewall: UFW
+Snapshots: Snapper + snap-pac
+AUR Helper: yay (install via post-install script)
 
 ==========================================
 NOTES_EOF
 
 echo "✓ Post-install notes saved to /root/POST_INSTALL_NOTES.txt"
+
+# Also create notes for the user
+cp /root/POST_INSTALL_NOTES.txt /home/$USERNAME/POST_INSTALL_NOTES.txt
+chown $USERNAME:$USERNAME /home/$USERNAME/POST_INSTALL_NOTES.txt
 
 # ========================================
 # FINAL SUMMARY
@@ -690,6 +1045,22 @@ echo "  Bootloader: GRUB (EFI)"
 echo "  Filesystem: Btrfs + LUKS"
 echo "  Desktop: GNOME + GDM"
 echo "  Browser: Chromium"
+echo "  Snapshots: Snapper (configured)"
+echo "  Firewall: UFW (to enable after login)"
+echo "  Video: Drivers auto-detected"
+echo "  Fonts: Extended collection"
+echo
+echo "=== ⚠️  IMPORTANT: After First Login ==="
+echo "Post-installation runs AUTOMATICALLY at first boot!"
+echo
+echo "The first boot will take 5-10 minutes longer because:"
+echo "  - yay (AUR helper) is being installed"
+echo "  - Betterbird (email client) is being installed"
+echo "  - UFW firewall is being enabled"
+echo
+echo "This all happens BEFORE you see the login screen."
+echo "When GDM appears, everything is ready!"
+echo "After login, you'll see a notification confirming success."
 echo
 echo "=== Next Steps ==="
 echo "1. Exit chroot: exit"
@@ -698,11 +1069,9 @@ echo "3. Close LUKS: cryptsetup close cryptroot"
 echo "4. Reboot: reboot"
 echo
 echo "After reboot:"
-echo "  - You will be prompted for LUKS password"
-echo "  - GDM will start automatically"
-echo "  - Login with your created user credentials"
-echo "  - GNOME Desktop will load automatically"
-echo "  - See /root/POST_INSTALL_NOTES.txt for Betterbird installation"
+echo "  - Enter LUKS password"
+echo "  - Login with your user credentials"
+echo "  - Run the post-installation script!"
 echo
 
 CHROOT_EOF
@@ -729,7 +1098,7 @@ arch-chroot /mnt /chroot-setup.sh
 
 if [ $? -ne 0 ]; then
     echo
-    echo "⚠  WARNING: An error occurred in chroot"
+    echo "⚠️  WARNING: An error occurred in chroot"
     echo "The script is available at /mnt/chroot-setup.sh"
     echo "You can enter manually with: arch-chroot /mnt"
     exit 1
@@ -749,13 +1118,29 @@ echo "======================================"
 echo "✓ INSTALLATION COMPLETED!"
 echo "======================================"
 echo
-echo "=== Desktop Environment ==="
-echo "✓ GNOME Desktop installed"
-echo "✓ GDM Display Manager enabled"
-echo "✓ Chromium browser installed"
-echo "⚠  Betterbird: Install manually after first boot (see instructions below)"
+echo "=== What Was Configured ==="
+echo "✓ Base system + Linux kernel"
+echo "✓ GNOME Desktop Environment"
+echo "✓ Video drivers (auto-detected)"
+echo "✓ Additional fonts"
+echo "✓ Btrfs snapshots with Snapper"
+echo "✓ SSD TRIM (if applicable)"
+echo "✓ UFW firewall (installed, to enable after login)"
+echo "✓ Chromium browser"
 echo
-echo "=== To Complete ==="
+echo "=== ⚠️  FIRST BOOT INFORMATION ==="
+echo "✓ Post-installation will run AUTOMATICALLY at first boot!"
+echo
+echo "Before the login screen appears, the system will:"
+echo "  - Install yay (AUR helper)"
+echo "  - Install Betterbird (email client)"
+echo "  - Enable UFW firewall"
+echo
+echo "⚠️  First boot takes 5-10 minutes longer than normal"
+echo "When you see GDM login screen, everything is ready!"
+echo "After login, you'll see a success notification."
+echo
+echo "=== To Complete Installation ==="
 echo "1. Unmount partitions:"
 echo "   umount -R /mnt"
 echo "   swapoff -a"
@@ -766,26 +1151,10 @@ echo "   reboot"
 echo
 echo "3. After reboot:"
 echo "   - Enter LUKS password"
-echo "   - GDM login screen will appear"
-echo "   - Login with your user credentials"
-echo "   - GNOME Desktop will start automatically"
-echo
-echo "=== Install Betterbird (Email Client) ==="
-echo "After logging into GNOME:"
-echo "1. Open Terminal (GNOME Terminal)"
-echo "2. Install yay (AUR helper):"
-echo "   git clone https://aur.archlinux.org/yay.git"
-echo "   cd yay && makepkg -si"
-echo "3. Install Betterbird:"
-echo "   yay -S betterbird-bin"
-echo
-echo "Or see /root/POST_INSTALL_NOTES.txt for detailed instructions"
-echo
-echo "=== Recommended Next Steps ==="
-echo "- Update system: sudo pacman -Syu"
-echo "- Install video drivers for your GPU"
-echo "- Configure firewall: sudo pacman -S ufw && sudo ufw enable"
-echo "- Configure btrfs snapshots with snapper"
+echo "   - Wait 5-10 minutes (post-install running in background)"
+echo "   - GDM login screen will appear when ready"
+echo "   - Login with your user"
+echo "   - You'll see a success notification!"
 echo
 
 read -p "Do you want to unmount partitions now? (yes/no) [no]: " UNMOUNT_NOW
