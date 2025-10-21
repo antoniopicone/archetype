@@ -1,0 +1,133 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: patroni
+  namespace: database
+  labels:
+    application: patroni
+    cluster-name: postgres-cluster
+spec:
+  serviceName: patroni-headless
+  replicas: 2
+  selector:
+    matchLabels:
+      application: patroni
+      cluster-name: postgres-cluster
+  template:
+    metadata:
+      labels:
+        application: patroni
+        cluster-name: postgres-cluster
+    spec:
+      serviceAccountName: patroni
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: application
+                operator: In
+                values:
+                - patroni
+            topologyKey: kubernetes.io/hostname
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: node-role.kubernetes.io/witness
+                operator: DoesNotExist
+      containers:
+      - name: patroni
+        image: ghcr.io/zalando/spilo-15:3.1-p1
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 5432
+          protocol: TCP
+          name: postgresql
+        - containerPort: 8008
+          protocol: TCP
+          name: patroni
+        env:
+        - name: SCOPE
+          value: postgres-cluster
+        - name: PGVERSION
+          value: "15"
+        - name: KUBERNETES_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: KUBERNETES_LABELS
+          value: '{"application": "patroni", "cluster-name": "postgres-cluster"}'
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: PGROOT
+          value: /home/postgres/pgdata
+        - name: PGDATA
+          value: /home/postgres/pgdata/pgroot/data
+        - name: ETCD3_HOSTS
+          value: "etcd-0.etcd-headless.database.svc.cluster.local:2379,etcd-1.etcd-headless.database.svc.cluster.local:2379,etcd-2.etcd-headless.database.svc.cluster.local:2379"
+        - name: POSTGRES_USER
+          value: postgres
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: patroni-secrets
+              key: PATRONI_SUPERUSER_PASSWORD
+        - name: PGUSER_REPLICATOR
+          value: replicator
+        - name: PGPASSWORD_REPLICATOR
+          valueFrom:
+            secretKeyRef:
+              name: patroni-secrets
+              key: PATRONI_REPLICATION_PASSWORD
+        - name: PGUSER_ADMIN
+          value: admin
+        - name: PGPASSWORD_ADMIN
+          valueFrom:
+            secretKeyRef:
+              name: patroni-secrets
+              key: PATRONI_admin_PASSWORD
+        # Configurazione sync replication per zero data loss
+        - name: PATRONI_SYNCHRONOUS_MODE
+          value: "true"
+        - name: PATRONI_SYNCHRONOUS_MODE_STRICT
+          value: "true"
+        - name: PATRONI_POSTGRESQL_PARAMETERS
+          value: '{"synchronous_commit": "on", "synchronous_standby_names": "ANY 1 (*)", "max_connections": "100"}'
+        volumeMounts:
+        - name: pgdata
+          mountPath: /home/postgres/pgdata
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8008
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /readiness
+            port: 8008
+          initialDelaySeconds: 10
+          periodSeconds: 10
+  volumeClaimTemplates:
+  - metadata:
+      name: pgdata
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: longhorn-replicated
+      resources:
+        requests:
+          storage: 20Gi

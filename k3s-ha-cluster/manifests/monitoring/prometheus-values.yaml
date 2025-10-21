@@ -1,0 +1,33 @@
+# Helm values for kube-prometheus-stack
+# Install with: helm install prometheus prometheus-community/kube-prometheus-stack -n monitoring -f prometheus-values.yaml
+
+prometheus:
+  prometheusSpec:
+    serviceMonitorSelectorNilUsesHelmValues: false
+    retention: 7d
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          storageClassName: longhorn-replicated
+          resources:
+            requests:
+              storage: 10Gi
+
+grafana:
+  adminPassword: "admin"
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClassName: longhorn-replicated
+
+alertmanager:
+  alertmanagerSpec:
+    storage:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          storageClassName: longhorn-replicated
+          resources:
+            requests:
+              storage: 5Gi

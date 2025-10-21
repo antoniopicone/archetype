@@ -1,0 +1,43 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: patroni
+  namespace: database
+  labels:
+    application: patroni
+    cluster-name: postgres-cluster
+spec:
+  type: ClusterIP
+  ports:
+  - port: 5432
+    targetPort: 5432
+    protocol: TCP
+    name: postgresql
+  selector:
+    application: patroni
+    cluster-name: postgres-cluster
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: patroni-headless
+  namespace: database
+  labels:
+    application: patroni
+    cluster-name: postgres-cluster
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+  - port: 5432
+    targetPort: 5432
+    protocol: TCP
+    name: postgresql
+  - port: 8008
+    targetPort: 8008
+    protocol: TCP
+    name: patroni
+  selector:
+    application: patroni
+    cluster-name: postgres-cluster

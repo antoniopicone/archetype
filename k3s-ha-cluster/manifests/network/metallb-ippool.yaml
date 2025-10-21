@@ -1,0 +1,20 @@
+---
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: tailscale-pool
+  namespace: metallb-system
+spec:
+  addresses:
+  - 100.100.100.20-100.100.100.30
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: tailscale-advert
+  namespace: metallb-system
+spec:
+  ipAddressPools:
+  - tailscale-pool
+  interfaces:
+  - tailscale0
