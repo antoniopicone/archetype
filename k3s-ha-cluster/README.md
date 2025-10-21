@@ -101,7 +101,9 @@ The interactive installer will:
 2. Ask which device to install on
 3. Ask if it's a master or witness node
 4. Request SSH credentials
-5. Perform the installation
+5. **Automatically remove the node from any existing cluster** (if reinstalling)
+6. Clean up any previous K3s installation
+7. Perform the installation
 
 **For the first master:**
 - Select node type: **Master node**
@@ -297,6 +299,30 @@ sudo journalctl -u k3s -f
 ```
 
 ## Troubleshooting
+
+### Duplicate Node Name Error
+
+If you get `"etcd cluster join failed: duplicate node name found"` when installing a witness or additional master:
+
+**Option 1: Remove the old node from the cluster**
+```bash
+# On any master node
+./remove-node.sh
+# Follow the prompts to select and remove the old node
+
+# Then retry the witness installation
+```
+
+**Option 2: Use a different node name**
+```bash
+# When running the installer, set a custom node name
+K3S_NODE_NAME=witness-new ./install-witness.sh
+```
+
+The issue occurs when:
+- Reinstalling a node without cleaning it from the cluster first
+- The node's hostname conflicts with an existing etcd member
+- Previous installation failed but left entries in etcd
 
 ### Node Not Ready
 

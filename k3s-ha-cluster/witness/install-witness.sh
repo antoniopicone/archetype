@@ -30,9 +30,54 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 
+# Funzione per rimuovere questo nodo da un eventuale cluster remoto
+remove_from_cluster() {
+    local node_name=$(hostname)
+
+    # Verifica se K3s è installato e ha un kubeconfig
+    if [ -f /etc/rancher/k3s/k3s.yaml ]; then
+        log_info "Rilevata installazione K3s esistente, verifico se il nodo è parte di un cluster..."
+
+        # Prova a ottenere informazioni sul cluster
+        export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+
+        # Verifica se questo è un nodo standalone o parte di un cluster
+        if timeout 5 kubectl get nodes &>/dev/null; then
+            local node_count=$(kubectl get nodes --no-headers 2>/dev/null | wc -l)
+
+            if [ "$node_count" -gt 1 ]; then
+                log_warn "Questo nodo fa parte di un cluster con $node_count nodi"
+                log_info "Tentativo di rimuovere questo nodo ($node_name) dal cluster..."
+
+                # Drain del nodo (ignora errori se il nodo è già down)
+                kubectl drain "$node_name" --ignore-daemonsets --delete-emptydir-data --force --timeout=30s 2>/dev/null || log_warn "Drain fallito o non necessario"
+
+                # Delete del nodo
+                if kubectl delete node "$node_name" 2>/dev/null; then
+                    log_info "Nodo rimosso dal cluster con successo"
+                    sleep 3
+                else
+                    log_warn "Non è stato possibile rimuovere il nodo dal cluster (potrebbe essere già stato rimosso)"
+                fi
+            else
+                log_info "Questo è un nodo standalone, nessuna rimozione dal cluster necessaria"
+            fi
+        else
+            log_info "Non è possibile connettersi al cluster (potrebbe essere già stato rimosso o essere offline)"
+        fi
+
+        unset KUBECONFIG
+    fi
+}
+
 # Funzione di pulizia K3s
 clean_k3s() {
     log_warn "Eseguo pulizia completa di K3s (stop, uninstall, rimozione file, variabili d'ambiente e directory residue)"
+
+    # Prima rimuovi il nodo da un eventuale cluster
+    remove_from_cluster
+
+    # Poi procedi con la pulizia locale
     systemctl stop k3s 2>/dev/null || true
     /usr/local/bin/k3s-uninstall.sh 2>/dev/null || /usr/bin/k3s-uninstall.sh 2>/dev/null || true
     rm -rf /var/lib/rancher/k3s
@@ -71,6 +116,10 @@ if [[ "$HOSTNAME" == "localhost" || "$HOSTNAME" == "localhost.localdomain" ]]; t
     exit 1
 fi
 log_info "Hostname: $HOSTNAME"
+
+# Allow override of node name to avoid conflicts
+NODE_NAME="${K3S_NODE_NAME:-$HOSTNAME}"
+log_info "Node name: $NODE_NAME"
 
 # Check time sync
 log_info "Checking time synchronization..."
@@ -178,20 +227,21 @@ sysctl --system
 log_info "Installing K3s as witness node (etcd-only)..."
 log_info "This node will participate in consensus but NOT run workloads"
 log_info "Using Tailscale IP: $TAILSCALE_IP"
-log_info "Hostname: $HOSTNAME"
+log_info "Node name: $NODE_NAME"
 
 # IMPORTANTE: NON usare --bind-address con Tailscale
 if ! curl -sfL https://get.k3s.io | K3S_TOKEN="$K3S_TOKEN" sh -s - server \
     --server "https://$FIRST_MASTER_IP:6443" \
     --node-ip="$TAILSCALE_IP" \
     --advertise-address="$TAILSCALE_IP" \
+    --node-name="$NODE_NAME" \
     --flannel-iface=tailscale0 \
     --write-kubeconfig-mode=644 \
     --disable=traefik \
     --disable=servicelb \
     --node-taint node-role.kubernetes.io/witness=true:NoSchedule \
     --tls-san="$TAILSCALE_IP" \
-    --tls-san="$HOSTNAME" \
+    --tls-san="$NODE_NAME" \
     --tls-san="localhost" \
     --tls-san="127.0.0.1"; then
 
@@ -222,6 +272,12 @@ if ! curl -sfL https://get.k3s.io | K3S_TOKEN="$K3S_TOKEN" sh -s - server \
     log_error "- Verifica che il primo master ($FIRST_MASTER_IP) sia online e K3s sia running"
     log_error "- Sul primo master esegui: systemctl status k3s"
     log_error "- Verifica la connettività Tailscale tra i nodi"
+    log_error ""
+    log_error "Se vedi l'errore 'duplicate node name found':"
+    log_error "- Sul master, rimuovi il vecchio nodo dal cluster:"
+    log_error "  kubectl delete node $NODE_NAME"
+    log_error "- Oppure usa un nome diverso:"
+    log_error "  K3S_NODE_NAME=witness-new ./install-witness.sh"
     log_error ""
     exit 1
 fi
@@ -303,6 +359,30 @@ log_info "Node IP: $TAILSCALE_IP"
 log_info "Role: etcd consensus only (NoSchedule taint)"
 log_info "=========================================="
 
+# Configure kubectl for root user
+log_info "Configuring kubectl for root user..."
+mkdir -p /root/.kube
+cp /etc/rancher/k3s/k3s.yaml /root/.kube/config
+chown root:root /root/.kube/config
+chmod 600 /root/.kube/config
+
+# Set KUBECONFIG environment variable persistently
+if ! grep -q "KUBECONFIG" /root/.bashrc; then
+    echo 'export KUBECONFIG=/root/.kube/config' >> /root/.bashrc
+fi
+
+if [ -f /root/.zshrc ]; then
+    if ! grep -q "KUBECONFIG" /root/.zshrc; then
+        echo 'export KUBECONFIG=/root/.kube/config' >> /root/.zshrc
+    fi
+fi
+
+# Set for current session
+export KUBECONFIG=/root/.kube/config
+
+log_info "kubectl configured successfully!"
+log_info "KUBECONFIG set to: /root/.kube/config"
+
 # Create helper script for kubectl
 cat > /usr/local/bin/k <<'EOF'
 #!/bin/bash
@@ -311,3 +391,6 @@ EOF
 chmod +x /usr/local/bin/k
 
 log_info "Created shortcut: use 'k' instead of 'k3s kubectl'"
+log_info ""
+log_info "You can now use 'kubectl' command directly (after re-login)"
+log_info "Or use 'k' as a shortcut immediately"
