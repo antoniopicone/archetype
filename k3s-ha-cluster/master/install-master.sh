@@ -179,12 +179,12 @@ log_info "Installing prerequisites..."
 if [ -f /etc/debian_version ]; then
     log_info "Detected Debian/Ubuntu-based system"
     apt-get update
-    apt-get install -y curl wget git vim htop open-iscsi nfs-common
+    apt-get install -y curl wget git vim htop open-iscsi nfs-common jq
     systemctl enable --now iscsid
 elif [ -f /etc/arch-release ]; then
     log_info "Detected Arch Linux system"
     pacman -Syu --noconfirm
-    pacman -S --noconfirm curl wget git vim htop open-iscsi nfs-utils
+    pacman -S --noconfirm curl wget git vim htop open-iscsi nfs-utils jq
     systemctl enable --now iscsid
 else
     log_error "Unsupported OS"

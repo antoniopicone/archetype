@@ -152,14 +152,20 @@ log_info "Tailscale checks passed!"
 log_info "Pulizia automatica della directory dati K3s..."
 rm -rf /var/lib/rancher/k3s
 
-# Required parameters
+
+# Parametri richiesti
 K3S_TOKEN=${1:-""}
 FIRST_MASTER_IP=${2:-""}
+SECOND_MASTER_IP=${3:-""}
 
 if [ -z "$K3S_TOKEN" ] || [ -z "$FIRST_MASTER_IP" ]; then
     log_error "K3S_TOKEN and FIRST_MASTER_IP are required!"
-    log_error "Usage: $0 <K3S_TOKEN> <FIRST_MASTER_IP>"
+    log_error "Usage: $0 <K3S_TOKEN> <FIRST_MASTER_IP> [SECOND_MASTER_IP]"
     exit 1
+fi
+
+if [ -z "$SECOND_MASTER_IP" ]; then
+    log_warn "Non hai specificato il secondo master. HAProxy verrà configurato solo sul primo master."
 fi
 
 log_info "Starting K3s witness node installation..."
@@ -181,18 +187,18 @@ if ! ip link show tailscale0 &>/dev/null; then
     exit 1
 fi
 
+
 # Install prerequisites
 log_info "Installing prerequisites..."
 
-# Detect OS
 if [ -f /etc/debian_version ]; then
     log_info "Detected Debian/Ubuntu-based system"
     apt-get update
-    apt-get install -y curl wget git vim htop
+    apt-get install -y curl wget git vim htop jq
 elif [ -f /etc/arch-release ]; then
     log_info "Detected Arch Linux system"
     pacman -Syu --noconfirm
-    pacman -S --noconfirm curl wget git vim htop
+    pacman -S --noconfirm curl wget git vim htop jq
 else
     log_error "Unsupported OS"
     exit 1
@@ -229,7 +235,9 @@ log_info "This node will participate in consensus but NOT run workloads"
 log_info "Using Tailscale IP: $TAILSCALE_IP"
 log_info "Node name: $NODE_NAME"
 
-# IMPORTANTE: NON usare --bind-address con Tailscale
+# Install K3s as a full server (not just etcd)
+# K3s does NOT support etcd-only nodes - every server runs the full control plane
+# We use NoSchedule taint to prevent workload pods from running here
 if ! curl -sfL https://get.k3s.io | K3S_TOKEN="$K3S_TOKEN" sh -s - server \
     --server "https://$FIRST_MASTER_IP:6443" \
     --node-ip="$TAILSCALE_IP" \
@@ -241,9 +249,7 @@ if ! curl -sfL https://get.k3s.io | K3S_TOKEN="$K3S_TOKEN" sh -s - server \
     --disable=servicelb \
     --node-taint node-role.kubernetes.io/witness=true:NoSchedule \
     --tls-san="$TAILSCALE_IP" \
-    --tls-san="$NODE_NAME" \
-    --tls-san="localhost" \
-    --tls-san="127.0.0.1"; then
+    --tls-san="$NODE_NAME"; then
 
     log_error "K3s installation script failed!"
     log_error ""
@@ -354,9 +360,11 @@ k3s kubectl get nodes
 
 log_info ""
 log_info "=========================================="
-log_info "K3s Witness Node Installation Complete!"
+log_info "K3s Server Node Installation Complete!"
 log_info "Node IP: $TAILSCALE_IP"
-log_info "Role: etcd consensus only (NoSchedule taint)"
+log_info "Role: Full K3s server (NoSchedule taint)"
+log_info "Note: This node runs the complete control plane"
+log_info "      but won't schedule workload pods due to taint"
 log_info "=========================================="
 
 # Configure kubectl for root user
